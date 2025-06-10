@@ -1095,13 +1095,8 @@ def main(argv=None, input=None, output=None, force_git_root=None, return_coder=F
         io.tool_output(f"Opening release notes: {urls.release_notes}")
         io.tool_output()
         webbrowser.open(urls.release_notes)
-    elif args.show_release_notes is None and is_first_run:
-        io.tool_output()
-        io.offer_url(
-            urls.release_notes,
-            "Would you like to see what's new in this version?",
-            allow_never=False,
-        )
+    # Removed automatic release notes prompt on first run
+    # Users can still explicitly request release notes with --show-release-notes
 
     if git_root and Path.cwd().resolve() != Path(git_root).resolve():
         io.tool_warning(
@@ -1130,9 +1125,8 @@ def main(argv=None, input=None, output=None, force_git_root=None, return_coder=F
 
     if args.message_file:
         try:
-            message_from_file = io.read_text(args.message_file)
-            io.tool_output()
-            coder.run(with_message=message_from_file)
+            with open(args.message_file, "r", encoding=io.encoding, errors="replace") as f:
+                lines = f.readlines()
         except FileNotFoundError:
             io.tool_error(f"Message file not found: {args.message_file}")
             analytics.event("exit", reason="Message file not found")
@@ -1141,6 +1135,31 @@ def main(argv=None, input=None, output=None, force_git_root=None, return_coder=F
             io.tool_error(f"Error reading message file: {e}")
             analytics.event("exit", reason="Message file IO error")
             return 1
+
+        io.tool_output()
+        
+        # Process each line as a separate command/message
+        for line_num, line in enumerate(lines, 1):
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue  # Skip empty lines and comments
+
+            io.tool_output(f"Processing line {line_num}: {line}")
+            io.add_to_input_history(line)
+            
+            try:
+                # Check if this is a command (starts with / or !)
+                if commands.is_command(line):
+                    commands.run(line)
+                else:
+                    # Regular message for the LLM
+                    coder.run(with_message=line)
+            except SwitchCoder:
+                io.tool_warning(f"Line {line_num}: Command '{line}' caused coder switch, continuing with next line.")
+                continue
+            except Exception as e:
+                io.tool_error(f"Error processing line {line_num}: {e}")
+                continue
 
         analytics.event("exit", reason="Completed --message-file")
         return

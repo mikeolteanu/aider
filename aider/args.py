@@ -636,8 +636,8 @@ def get_parser(default_config_files, git_root):
         "-f",
         metavar="MESSAGE_FILE",
         help=(
-            "Specify a file containing the message to send the LLM, process reply, then exit"
-            " (disables chat mode)"
+            "Specify a file containing messages/commands to process line by line, then exit"
+            " (disables chat mode). Lines starting with # are treated as comments and skipped."
         ),
     ).complete = shtab.FILE
     group.add_argument(

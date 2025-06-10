@@ -109,22 +109,8 @@ class Analytics:
             self.save_data()
 
     def need_to_ask(self, args_analytics):
-        if args_analytics is False:
-            return False
-
-        could_ask = not self.asked_opt_in and not self.permanently_disable
-        if not could_ask:
-            return False
-
-        if args_analytics is True:
-            return True
-
-        assert args_analytics is None, args_analytics
-
-        if not self.user_id:
-            return False
-
-        return is_uuid_in_percentage(self.user_id, PERCENT)
+        # Never ask for analytics consent - always return False
+        return False
 
     def get_data_file_path(self):
         try:

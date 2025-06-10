@@ -17,10 +17,10 @@ from aider.scrape import Scraper, has_playwright
 class CaptureIO(InputOutput):
     lines = []
 
-    def tool_output(self, msg, log_only=False):
-        if not log_only:
-            self.lines.append(msg)
-        super().tool_output(msg, log_only=log_only)
+    def tool_output(self, *messages, log_only=False):
+        if not log_only and messages:
+            self.lines.append(" ".join(str(msg) for msg in messages))
+        super().tool_output(*messages, log_only=log_only)
 
     def tool_error(self, msg):
         self.lines.append(msg)
@@ -188,7 +188,7 @@ class GUI:
         fnames = st.multiselect(
             "Add files to the chat",
             self.coder.get_all_relative_files(),
-            default=self.state.initial_inchat_files,
+            default=list(self.coder.get_inchat_relative_files()),
             placeholder="Files to edit",
             disabled=self.prompt_pending(),
             help=(
@@ -312,7 +312,12 @@ class GUI:
                 if role == "edit":
                     self.show_edit_info(msg)
                 elif role == "info":
-                    st.info(msg["content"])
+                    # Use markdown with code formatting for better readability of command output
+                    content = msg["content"]
+                    if "\n" in content or any(word in content.lower() for word in ["token", "cost", "usage", "commit"]):
+                        st.markdown(f"```\n{content}\n```")
+                    else:
+                        st.info(content)
                 elif role == "text":
                     text = msg["content"]
                     line = text.splitlines()[0]
@@ -360,6 +365,7 @@ class GUI:
     def __init__(self):
         self.coder = get_coder()
         self.state = get_state()
+        self.command_handled = False
 
         # Force the coder to cooperate, regardless of cmd line args
         self.coder.yield_stream = True
@@ -371,14 +377,14 @@ class GUI:
         self.do_messages_container()
         self.do_sidebar()
 
-        user_inp = st.chat_input("Say something")
+        user_inp = st.chat_input("Say something (or use /add, /drop, /help, etc.)")
         if user_inp:
             self.prompt = user_inp
 
         if self.prompt_pending():
             self.process_chat()
 
-        if not self.prompt:
+        if not self.prompt or self.command_handled:
             return
 
         self.state.prompt = self.prompt
@@ -412,6 +418,14 @@ class GUI:
     def process_chat(self):
         prompt = self.state.prompt
         self.state.prompt = None
+
+        # Check if this is a slash command first
+        if prompt and self.coder.commands.is_command(prompt):
+            # Handle slash commands
+            self.handle_command(prompt)
+            # Mark that we handled a command to prevent double processing
+            self.command_handled = True
+            return
 
         # This duplicates logic from within Coder
         self.num_reflections = 0
@@ -451,6 +465,53 @@ class GUI:
             self.show_edit_info(edit)
 
         # re-render the UI for the non-prompt_pending state
+        st.rerun()
+
+    def handle_command(self, prompt):
+        """Handle slash commands in the browser interface"""
+        from aider.commands import SwitchCoder
+        
+        # Don't manually display the command here - let the main flow handle it
+        # This prevents double display of the user input
+        
+        try:
+            # Capture command output using the same CaptureIO that's already set up
+            self.coder.commands.io.get_captured_lines()  # Clear any previous output
+            
+            # Run the command
+            result = self.coder.commands.run(prompt)
+            
+            # Get any output that was captured
+            captured_lines = self.coder.commands.io.get_captured_lines()
+            
+            # Display command output if any
+            if captured_lines:
+                output = "\n".join(captured_lines)
+                self.info(output)
+            
+            # If the command returned a result (like some commands that need to show info)
+            if result and captured_lines:
+                # Don't duplicate output if we already showed captured lines
+                pass
+            elif result:
+                self.info(str(result))
+                
+            # Some commands might return a prompt to send to the LLM
+            if result and isinstance(result, str) and not captured_lines:
+                # This handles commands like /undo that might return a prompt
+                with self.messages.chat_message("assistant"):
+                    res = st.write_stream(self.coder.run_stream(result))
+                    self.state.messages.append({"role": "assistant", "content": res})
+                    
+        except SwitchCoder as e:
+            # Some commands like /model, /chat-mode etc. throw SwitchCoder
+            # In browser mode, we'll just show a message that these aren't supported yet
+            self.info(f"Command '{prompt}' requires switching coder configuration, which is not yet supported in browser mode.")
+            
+        except Exception as e:
+            self.info(f"Command error: {str(e)}")
+        
+        # Force UI refresh to show command results
         st.rerun()
 
     def info(self, message, echo=True):
