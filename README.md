@@ -59,7 +59,7 @@ This repository contains an enhanced version of aider with improved browser mode
 
 **One-line install:**
 ```bash
-git clone https://github.com/YOUR_USERNAME/aider.git && cd aider && pip install -e .
+git clone https://github.com/mikeolteanu/aider.git && cd aider && pip install -e .
 ```
 
 **Features in this custom version:**
