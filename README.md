@@ -55,15 +55,73 @@ aider --model o3-mini --api-key openai=<key>
 
 ### Custom Installation (Enhanced Browser Mode)
 
-This repository contains an enhanced version of aider with improved browser mode that supports all slash commands:
+This repository contains an enhanced version of aider with significantly improved browser mode that supports full functionality and user customization:
 
 **One-line install:**
 ```bash
 git clone https://github.com/mikeolteanu/aider.git && cd aider && pip install -e .
 ```
 
-**Features in this custom version:**
-- ✅ Enhanced browser mode with full slash command support (`/add`, `/drop`, `/help`, `/tokens`, etc.)
-- ✅ Removed analytics and release notes prompts for smoother startup
-- ✅ Line-by-line message file processing with `--message-file`
-- ✅ Improved file persistence in browser mode
+## 🚀 Custom Features in This Version
+
+### Enhanced Browser Mode
+- ✅ **Full slash command support** - All commands work in browser: `/add`, `/drop`, `/help`, `/tokens`, `/run`, `/git`, `/lint`, etc.
+- ✅ **Interactive confirmation prompts** - Users can respond to all aider questions directly in the browser interface
+- ✅ **Smart prompt preferences** - Configure which prompts to auto-approve, auto-deny, or always ask about
+- ✅ **Command output display** - All command results (like `/run ls`) now appear in the browser, not just console
+- ✅ **Session cost tracking** - Real-time cost display in collapsed session info
+- ✅ **Collapsible session info** - Clean interface with expandable technical details
+- ✅ **Settings management** - Easy-to-use UI for configuring browser behavior
+
+### Command Output Improvements
+- ✅ **`/run` command results** now display immediately in browser interface
+- ✅ **`/git diff` output** properly captured and shown in browser
+- ✅ **Shell command suggestions** from LLM show output in browser before adding to chat
+- ✅ **Exit codes and error handling** clearly displayed for all commands
+
+### User Experience Enhancements  
+- ✅ **Removed redundant messaging** - No more "How can I help you?" and startup noise
+- ✅ **Smart session display** - Shows version and current cost on one clean line
+- ✅ **Tabbed sidebar** - Organized interface with Main and Settings tabs
+- ✅ **Visual confirmation prompts** - Clear buttons for Yes/No/All/Skip All/Don't Ask Again
+
+### Configuration System
+- ✅ **Browser config file** - `~/.aider_browser_config.json` for persistent settings
+- ✅ **Granular prompt control** - Set preferences for 20+ different confirmation types:
+  - **File Operations**: Create files, add to chat, edit files not in chat
+  - **Command Execution**: Shell commands, output inclusion, security prompts  
+  - **Installation**: Package installs, tool setup, OAuth login
+  - **Error Handling**: Lint fixes, test fixes, context window issues
+  - **URLs & Web**: URL detection, documentation links
+  - **Repository**: Git repo creation, .gitignore management
+  - **Analytics**: Data collection preferences
+- ✅ **Smart defaults** - Auto-approve routine tasks, always ask for security-sensitive operations
+- ✅ **Category organization** - Settings grouped logically with helpful descriptions
+
+### Security & Control
+- ✅ **Preserved security model** - Shell commands still require explicit confirmation when configured to ask
+- ✅ **User choice** - Full control over automation vs. manual approval for each prompt type
+- ✅ **Extensible design** - Easy to add new prompt types and browser settings
+
+### Legacy Features
+- ✅ **Line-by-line message file processing** with `--message-file`
+- ✅ **Improved file persistence** in browser mode
+- ✅ **Removed analytics and release notes prompts** for smoother startup
+
+### Usage Examples
+
+**Browser mode with custom config:**
+```bash
+# Start browser mode
+aider --browser
+
+# Settings are automatically loaded from ~/.aider_browser_config.json
+# Configure preferences in Settings tab of browser interface
+```
+
+**Example configuration scenarios:**
+- **Development workflow**: Auto-approve lint fixes, test fixes, and package installs
+- **Security-focused**: Ask for all commands, auto-deny URL additions  
+- **Streamlined**: Auto-approve file creation and repo setup, ask for everything else
+
+This enhanced version transforms aider's browser mode from a limited interface into a full-featured development environment with smart automation and complete user control.

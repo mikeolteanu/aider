@@ -1,7 +1,9 @@
 #!/usr/bin/env python
 
+import json
 import os
 import random
+import re
 import sys
 
 import streamlit as st
@@ -14,12 +16,141 @@ from aider.main import main as cli_main
 from aider.scrape import Scraper, has_playwright
 
 
+class BrowserConfig:
+    """Manages browser-specific configuration for prompt preferences"""
+    
+    def __init__(self, config_path=None):
+        self.config_path = config_path or os.path.expanduser("~/.aider_browser_config.json")
+        self.config = self.load_config()
+    
+    def load_config(self):
+        """Load config from file, create default if not found"""
+        try:
+            if os.path.exists(self.config_path):
+                with open(self.config_path, 'r') as f:
+                    return json.load(f)
+        except Exception as e:
+            print(f"Warning: Could not load browser config: {e}")
+        
+        # Return default config
+        return self.get_default_config()
+    
+    def save_config(self):
+        """Save current config to file"""
+        try:
+            os.makedirs(os.path.dirname(self.config_path), exist_ok=True)
+            with open(self.config_path, 'w') as f:
+                json.dump(self.config, f, indent=2)
+            return True
+        except Exception as e:
+            print(f"Error saving browser config: {e}")
+            return False
+    
+    def get_default_config(self):
+        """Return default configuration"""
+        return {
+            "version": "1.0",
+            "description": "Aider browser mode configuration file",
+            "prompt_preferences": {
+                "file_operations": {
+                    "create_new_file": "ask",
+                    "add_file_to_chat": "ask", 
+                    "edit_file_not_in_chat": "ask",
+                    "create_from_pattern": "ask"
+                },
+                "command_execution": {
+                    "run_shell_commands": "ask",
+                    "add_command_output": "ask",
+                    "add_run_output": "ask"
+                },
+                "installation": {
+                    "pip_install": "always_yes",
+                    "install_playwright": "always_yes",
+                    "openrouter_login": "ask"
+                },
+                "error_handling": {
+                    "fix_lint_errors": "always_yes",
+                    "fix_test_errors": "always_yes", 
+                    "context_window_exceeded": "ask"
+                },
+                "urls_and_web": {
+                    "add_url_to_chat": "always_no",
+                    "open_documentation_url": "ask"
+                },
+                "repository": {
+                    "create_git_repo": "always_yes",
+                    "add_to_gitignore": "always_yes"
+                },
+                "analytics": {
+                    "analytics_opt_in": "ask"
+                },
+                "architect_mode": {
+                    "execute_plan": "ask"
+                }
+            },
+            "prompt_patterns": {
+                "Create new file?": "create_new_file",
+                "Add file to the chat?": "add_file_to_chat",
+                "Allow edits to file that has not been added to the chat?": "edit_file_not_in_chat",
+                "No files matched .* Do you want to create .*": "create_from_pattern",
+                "Run shell command.*": "run_shell_commands",
+                "Add command output to the chat?": "add_command_output",
+                "Add .* tokens of command output to the chat?": "add_run_output",
+                "Run pip install?": "pip_install",
+                "Install playwright?": "install_playwright",
+                "Login to OpenRouter or create a free account?": "openrouter_login",
+                "Attempt to fix lint errors?": "fix_lint_errors",
+                "Fix lint errors in .*": "fix_lint_errors",
+                "Attempt to fix test errors?": "fix_test_errors",
+                "Try to proceed anyway?": "context_window_exceeded",
+                "Add URL to the chat?": "add_url_to_chat",
+                "Open .* URL .* for more info?": "open_documentation_url",
+                "No git repo found, create one to track aider's changes .*": "create_git_repo",
+                "Add .* to .gitignore .*": "add_to_gitignore",
+                "Allow collection of anonymous analytics to help improve aider?": "analytics_opt_in",
+                "Edit the files?": "execute_plan"
+            },
+            "ui_settings": {
+                "theme": "auto",
+                "show_session_cost": True,
+                "collapsed_announcements": True
+            }
+        }
+    
+    def get_prompt_preference(self, question):
+        """Get preference for a specific prompt question"""
+        # Find matching pattern
+        for pattern, preference_key in self.config.get("prompt_patterns", {}).items():
+            if re.search(pattern, question, re.IGNORECASE):
+                # Find the preference value by looking through categories
+                for category in self.config.get("prompt_preferences", {}).values():
+                    if preference_key in category:
+                        return category[preference_key]
+        
+        # Default to ask if no pattern matches
+        return "ask"
+    
+    def update_preference(self, preference_key, value):
+        """Update a specific preference"""
+        # Find and update the preference in the appropriate category
+        for category in self.config["prompt_preferences"].values():
+            if preference_key in category:
+                category[preference_key] = value
+                return True
+        return False
+    
+    def get_all_preferences(self):
+        """Get all preferences organized by category"""
+        return self.config.get("prompt_preferences", {})
+
+
 class BrowserIO(InputOutput):
     lines = []
     
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.gui_state = None
+        self.browser_config = BrowserConfig()
 
     def tool_output(self, *messages, log_only=False):
         if not log_only and messages:
@@ -58,6 +189,14 @@ class BrowserIO(InputOutput):
 
         if question_id in self.never_prompts:
             return False
+
+        # Check browser config for this prompt type
+        preference = self.browser_config.get_prompt_preference(question)
+        if preference == "always_yes":
+            return True
+        elif preference == "always_no":
+            return False
+        # If preference is "ask", continue with normal prompt flow
 
         # Check if we already have a response waiting
         if self.gui_state and self.gui_state.confirmation_response:
@@ -245,22 +384,113 @@ class GUI:
     def do_sidebar(self):
         with st.sidebar:
             st.title("Aider")
-            # self.cmds_tab, self.settings_tab = st.tabs(["Commands", "Settings"])
+            
+            # Create tabs for different sections
+            main_tab, settings_tab = st.tabs(["Main", "Settings"])
+            
+            with main_tab:
+                self.do_add_to_chat()
+                self.do_recent_msgs()
+                self.do_clear_chat_history()
+                
+                st.warning(
+                    "This browser version of aider is experimental. Please share feedback in [GitHub"
+                    " issues](https://github.com/Aider-AI/aider/issues)."
+                )
+            
+            with settings_tab:
+                self.do_prompt_settings()
 
-            # self.do_recommended_actions()
-            self.do_add_to_chat()
-            self.do_recent_msgs()
-            self.do_clear_chat_history()
-            # st.container(height=150, border=False)
-            # st.write("### Experimental")
-
-            st.warning(
-                "This browser version of aider is experimental. Please share feedback in [GitHub"
-                " issues](https://github.com/Aider-AI/aider/issues)."
-            )
-
-    def do_settings_tab(self):
-        pass
+    def do_prompt_settings(self):
+        """Settings UI for managing prompt preferences"""
+        st.subheader("🔧 Prompt Preferences")
+        st.write("Configure how aider handles different types of confirmation prompts.")
+        
+        # Get the browser config
+        browser_config = self.coder.commands.io.browser_config
+        all_prefs = browser_config.get_all_preferences()
+        
+        # Track if any changes were made
+        changes_made = False
+        
+        for category_name, category_prefs in all_prefs.items():
+            # Create a nice display name for the category
+            display_name = category_name.replace("_", " ").title()
+            
+            with st.expander(f"📁 {display_name}", expanded=False):
+                for pref_key, current_value in category_prefs.items():
+                    # Create a nice display name for the preference
+                    pref_display = pref_key.replace("_", " ").title()
+                    
+                    # Create selectbox for this preference
+                    options = ["ask", "always_yes", "always_no"]
+                    option_labels = ["🤔 Ask me", "✅ Always Yes", "❌ Always No"]
+                    
+                    try:
+                        current_index = options.index(current_value)
+                    except ValueError:
+                        current_index = 0  # Default to "ask"
+                    
+                    new_value = st.selectbox(
+                        pref_display,
+                        options,
+                        index=current_index,
+                        format_func=lambda x: option_labels[options.index(x)],
+                        key=f"pref_{category_name}_{pref_key}",
+                        help=self._get_preference_help(pref_key)
+                    )
+                    
+                    # Check if value changed
+                    if new_value != current_value:
+                        browser_config.update_preference(pref_key, new_value)
+                        changes_made = True
+        
+        # Save button and status
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("💾 Save Settings", disabled=not changes_made):
+                if browser_config.save_config():
+                    st.success("Settings saved!")
+                    st.rerun()
+                else:
+                    st.error("Failed to save settings")
+        
+        with col2:
+            if st.button("🔄 Reset to Defaults"):
+                browser_config.config = browser_config.get_default_config()
+                if browser_config.save_config():
+                    st.success("Settings reset to defaults!")
+                    st.rerun()
+                else:
+                    st.error("Failed to reset settings")
+        
+        # Show config file location
+        st.info(f"📄 Config file: `{browser_config.config_path}`")
+    
+    def _get_preference_help(self, pref_key):
+        """Get help text for different preference types"""
+        help_text = {
+            "create_new_file": "When aider wants to create a new file that doesn't exist",
+            "add_file_to_chat": "When aider mentions a file not currently in the chat",
+            "edit_file_not_in_chat": "When aider wants to edit a file not added to chat",
+            "create_from_pattern": "When file patterns don't match existing files",
+            "run_shell_commands": "When aider suggests running shell commands (security sensitive)",
+            "add_command_output": "Whether to include command output in the chat",
+            "add_run_output": "Whether to include /run command output in chat",
+            "pip_install": "When aider wants to install Python packages",
+            "install_playwright": "When aider needs to install playwright for web scraping",
+            "openrouter_login": "When aider offers OpenRouter OAuth login",
+            "fix_lint_errors": "When aider wants to automatically fix lint errors",
+            "fix_test_errors": "When aider wants to automatically fix test failures",
+            "context_window_exceeded": "When message would exceed model's context window",
+            "add_url_to_chat": "When aider detects URLs in your input",
+            "open_documentation_url": "When aider offers to open documentation links",
+            "create_git_repo": "When aider suggests creating a git repository",
+            "add_to_gitignore": "When aider suggests adding patterns to .gitignore",
+            "analytics_opt_in": "Whether to allow anonymous analytics collection",
+            "execute_plan": "In architect mode, whether to execute the generated plan"
+        }
+        return help_text.get(pref_key, "Configure this prompt preference")
 
     def do_recommended_actions(self):
         text = "Aider works best when your code is stored in a git repo.  \n"
