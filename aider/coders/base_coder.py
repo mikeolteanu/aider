@@ -2473,8 +2473,18 @@ class Coder:
             # Add the command to input history
             self.io.add_to_input_history(f"/run {command.strip()}")
             exit_status, output = run_cmd(command, error_print=self.io.tool_error, cwd=self.root)
-            if output:
+            
+            # Always show the command output immediately
+            # This ensures it appears in the browser interface
+            if output and output.strip():
+                self.io.tool_output(f"Exit code: {exit_status}")
+                self.io.tool_output("Output:")
+                self.io.tool_output(output)
                 accumulated_output += f"Output from {command}\n{output}\n"
+            else:
+                self.io.tool_output(f"Exit code: {exit_status}")
+                self.io.tool_output("(no output)")
+                accumulated_output += f"Output from {command}\n(no output)\n"
 
         if accumulated_output.strip() and self.io.confirm_ask(
             "Add command output to the chat?", allow_never=True

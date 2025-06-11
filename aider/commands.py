@@ -675,7 +675,13 @@ class Commands:
         self.io.tool_output(f"Diff since {commit_before_message[:7]}...")
 
         if self.coder.pretty:
-            run_cmd(f"git diff {commit_before_message}")
+            exit_status, combined_output = run_cmd(
+                f"git diff {commit_before_message}", 
+                error_print=self.io.tool_error, 
+                cwd=self.coder.root
+            )
+            if combined_output:
+                self.io.tool_output(combined_output)
             return
 
         diff = self.coder.repo.diff_commits(
@@ -1000,6 +1006,18 @@ class Commands:
 
         if combined_output is None:
             return
+
+        # Always show the command output immediately
+        # This ensures it appears in the browser interface
+        if combined_output.strip():
+            self.io.tool_output(f"Command: {args}")
+            self.io.tool_output(f"Exit code: {exit_status}")
+            self.io.tool_output("Output:")
+            self.io.tool_output(combined_output)
+        else:
+            self.io.tool_output(f"Command: {args}")
+            self.io.tool_output(f"Exit code: {exit_status}")
+            self.io.tool_output("(no output)")
 
         # Calculate token count of output
         token_count = self.coder.main_model.token_count(combined_output)

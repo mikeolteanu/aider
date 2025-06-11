@@ -14,8 +14,12 @@ from aider.main import main as cli_main
 from aider.scrape import Scraper, has_playwright
 
 
-class CaptureIO(InputOutput):
+class BrowserIO(InputOutput):
     lines = []
+    
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.gui_state = None
 
     def tool_output(self, *messages, log_only=False):
         if not log_only and messages:
@@ -34,6 +38,98 @@ class CaptureIO(InputOutput):
         lines = self.lines
         self.lines = []
         return lines
+
+    def confirm_ask(
+        self,
+        question,
+        default="y",
+        subject=None,
+        explicit_yes_required=False,
+        group=None,
+        allow_never=False,
+    ):
+        """Override confirm_ask to handle interactive prompts in browser mode"""
+        self.num_user_asks += 1
+
+        # Ring the bell if needed
+        self.ring_bell()
+
+        question_id = (question, subject)
+
+        if question_id in self.never_prompts:
+            return False
+
+        # Check if we already have a response waiting
+        if self.gui_state and self.gui_state.confirmation_response:
+            response = self.gui_state.confirmation_response
+            self.gui_state.confirmation_response = None  # Clear the response
+            
+            # Process the response like the original method
+            if response.lower().startswith("y"):
+                return True
+            elif response.lower().startswith("n"):
+                return False
+            elif response.lower().startswith("a"):
+                if group:
+                    group.preference = True
+                return True
+            elif response.lower().startswith("s"):
+                if group:
+                    group.preference = False
+                return False
+            elif response.lower().startswith("d"):
+                self.never_prompts.add(question_id)
+                return False
+            else:
+                # Default fallback
+                return default.lower().startswith("y")
+
+        if group and not group.show_group:
+            group = None
+        if group:
+            allow_never = True
+
+        valid_responses = ["yes", "no", "skip", "all"]
+        options = " (Y)es/(N)o"
+        if group:
+            if not explicit_yes_required:
+                options += "/(A)ll"
+            options += "/(S)kip all"
+        if allow_never:
+            options += "/(D)on't ask again"
+            valid_responses.append("don't")
+
+        if default.lower().startswith("y"):
+            question += options + " [Yes]: "
+        elif default.lower().startswith("n"):
+            question += options + " [No]: "
+        else:
+            question += options + f" [{default}]: "
+
+        # Store the prompt details for the browser UI to display
+        prompt_data = {
+            "question": question,
+            "subject": subject,
+            "default": default,
+            "explicit_yes_required": explicit_yes_required,
+            "group": group,
+            "allow_never": allow_never,
+            "valid_responses": valid_responses
+        }
+        
+        if self.gui_state:
+            self.gui_state.pending_confirmation = prompt_data
+        
+        # Signal that we need user input by raising an exception
+        # This will be caught by the browser interface
+        raise BrowserPromptException(prompt_data)
+
+
+class BrowserPromptException(Exception):
+    """Exception raised when browser needs to prompt user for input"""
+    def __init__(self, prompt_data):
+        self.prompt_data = prompt_data
+        super().__init__("Browser prompt required")
 
 
 def search(text=None):
@@ -74,9 +170,9 @@ def get_coder():
     if not coder.repo:
         raise ValueError("GUI can currently only be used inside a git repo")
 
-    io = CaptureIO(
+    io = BrowserIO(
         pretty=False,
-        yes=True,
+        yes=False,  # Don't auto-answer, let user decide
         dry_run=coder.io.dry_run,
         encoding=coder.io.encoding,
     )
@@ -312,11 +408,28 @@ class GUI:
                 if role == "edit":
                     self.show_edit_info(msg)
                 elif role == "info":
-                    # Use markdown with code formatting for better readability of command output
+                    # Check if this is the session announcement (contains version and model info)
                     content = msg["content"]
-                    if "\n" in content or any(word in content.lower() for word in ["token", "cost", "usage", "commit"]):
+                    if "Aider v" in content and ("Main model:" in content or "Git repo:" in content):
+                        # This is the session announcement - make it collapsible
+                        lines = content.split("  \n")
+                        if lines:
+                            # Use the first line as the summary and add session cost
+                            summary = lines[0]
+                            # Format cost with appropriate precision
+                            cost = self.coder.total_cost
+                            if cost >= 0.01:
+                                cost_str = f"${cost:.2f}"
+                            else:
+                                cost_str = f"${cost:.4f}"
+                            
+                            with st.expander(f"ℹ️ {summary} • Session cost: {cost_str}", expanded=False):
+                                st.markdown(f"```\n{content}\n```")
+                    elif "\n" in content or any(word in content.lower() for word in ["token", "cost", "usage", "commit"]):
+                        # Regular info with code formatting
                         st.markdown(f"```\n{content}\n```")
                     else:
+                        # Simple info message
                         st.info(content)
                 elif role == "text":
                     text = msg["content"]
@@ -333,7 +446,6 @@ class GUI:
     def initialize_state(self):
         messages = [
             dict(role="info", content=self.announce()),
-            dict(role="assistant", content="How can I help you?"),
         ]
 
         self.state.init("messages", messages)
@@ -343,6 +455,9 @@ class GUI:
         self.state.init("web_content_num", 0)
         self.state.init("prompt")
         self.state.init("scraper")
+        self.state.init("pending_confirmation", None)
+        self.state.init("confirmation_response", None)
+        self.state.init("pending_command", None)  # Track command waiting for confirmation
 
         self.state.init("initial_inchat_files", self.coder.get_inchat_relative_files())
 
@@ -367,6 +482,10 @@ class GUI:
         self.state = get_state()
         self.command_handled = False
 
+        # Set the state reference in the BrowserIO
+        if isinstance(self.coder.commands.io, BrowserIO):
+            self.coder.commands.io.gui_state = self.state
+
         # Force the coder to cooperate, regardless of cmd line args
         self.coder.yield_stream = True
         self.coder.stream = True
@@ -376,12 +495,25 @@ class GUI:
 
         self.do_messages_container()
         self.do_sidebar()
+        
+        # Handle confirmation prompts
+        self.do_confirmation_prompt()
 
-        user_inp = st.chat_input("Say something (or use /add, /drop, /help, etc.)")
-        if user_inp:
+        # Disable input if there's a pending confirmation
+        input_disabled = self.state.pending_confirmation is not None
+        input_placeholder = "Please respond to the confirmation above" if input_disabled else "Say something (or use /add, /drop, /help, etc.)"
+        
+        user_inp = st.chat_input(input_placeholder, disabled=input_disabled)
+        if user_inp and not input_disabled:
             self.prompt = user_inp
 
-        if self.prompt_pending():
+        # Check if we need to resume a command after confirmation
+        if not input_disabled and self.state.confirmation_response and self.state.pending_command:
+            # Resume the pending command
+            self._resume_after_confirmation()
+            return
+
+        if self.prompt_pending() and not input_disabled:
             self.process_chat()
 
         if not self.prompt or self.command_handled:
@@ -419,53 +551,62 @@ class GUI:
         prompt = self.state.prompt
         self.state.prompt = None
 
-        # Check if this is a slash command first
-        if prompt and self.coder.commands.is_command(prompt):
-            # Handle slash commands
-            self.handle_command(prompt)
-            # Mark that we handled a command to prevent double processing
-            self.command_handled = True
-            return
+        try:
+            # Check if this is a slash command first
+            if prompt and self.coder.commands.is_command(prompt):
+                # Handle slash commands
+                self.handle_command(prompt)
+                # Mark that we handled a command to prevent double processing
+                self.command_handled = True
+                return
 
-        # This duplicates logic from within Coder
-        self.num_reflections = 0
-        self.max_reflections = 3
+            # This duplicates logic from within Coder
+            self.num_reflections = 0
+            self.max_reflections = 3
 
-        while prompt:
-            with self.messages.chat_message("assistant"):
-                res = st.write_stream(self.coder.run_stream(prompt))
-                self.state.messages.append({"role": "assistant", "content": res})
-                # self.cost()
+            while prompt:
+                with self.messages.chat_message("assistant"):
+                    res = st.write_stream(self.coder.run_stream(prompt))
+                    self.state.messages.append({"role": "assistant", "content": res})
+                    # self.cost()
 
-            prompt = None
-            if self.coder.reflected_message:
-                if self.num_reflections < self.max_reflections:
-                    self.num_reflections += 1
-                    self.info(self.coder.reflected_message)
-                    prompt = self.coder.reflected_message
+                prompt = None
+                if self.coder.reflected_message:
+                    if self.num_reflections < self.max_reflections:
+                        self.num_reflections += 1
+                        self.info(self.coder.reflected_message)
+                        prompt = self.coder.reflected_message
 
-        with self.messages:
-            edit = dict(
-                role="edit",
-                fnames=self.coder.aider_edited_files,
-            )
-            if self.state.last_aider_commit_hash != self.coder.last_aider_commit_hash:
-                edit["commit_hash"] = self.coder.last_aider_commit_hash
-                edit["commit_message"] = self.coder.last_aider_commit_message
-                commits = f"{self.coder.last_aider_commit_hash}~1"
-                diff = self.coder.repo.diff_commits(
-                    self.coder.pretty,
-                    commits,
-                    self.coder.last_aider_commit_hash,
+            with self.messages:
+                edit = dict(
+                    role="edit",
+                    fnames=self.coder.aider_edited_files,
                 )
-                edit["diff"] = diff
-                self.state.last_aider_commit_hash = self.coder.last_aider_commit_hash
+                if self.state.last_aider_commit_hash != self.coder.last_aider_commit_hash:
+                    edit["commit_hash"] = self.coder.last_aider_commit_hash
+                    edit["commit_message"] = self.coder.last_aider_commit_message
+                    commits = f"{self.coder.last_aider_commit_hash}~1"
+                    diff = self.coder.repo.diff_commits(
+                        self.coder.pretty,
+                        commits,
+                        self.coder.last_aider_commit_hash,
+                    )
+                    edit["diff"] = diff
+                    self.state.last_aider_commit_hash = self.coder.last_aider_commit_hash
 
-            self.state.messages.append(edit)
-            self.show_edit_info(edit)
+                self.state.messages.append(edit)
+                self.show_edit_info(edit)
 
-        # re-render the UI for the non-prompt_pending state
-        st.rerun()
+            # re-render the UI for the non-prompt_pending state
+            st.rerun()
+            
+        except BrowserPromptException as e:
+            # LLM processing needs user confirmation - store the command to resume later
+            self.state.pending_command = {
+                "type": "chat",
+                "prompt": prompt
+            }
+            st.rerun()
 
     def handle_command(self, prompt):
         """Handle slash commands in the browser interface"""
@@ -503,6 +644,14 @@ class GUI:
                     res = st.write_stream(self.coder.run_stream(result))
                     self.state.messages.append({"role": "assistant", "content": res})
                     
+        except BrowserPromptException as e:
+            # Command needs user confirmation - store the command to resume later
+            self.state.pending_command = {
+                "type": "slash_command",
+                "prompt": prompt
+            }
+            return
+            
         except SwitchCoder as e:
             # Some commands like /model, /chat-mode etc. throw SwitchCoder
             # In browser mode, we'll just show a message that these aren't supported yet
@@ -512,6 +661,76 @@ class GUI:
             self.info(f"Command error: {str(e)}")
         
         # Force UI refresh to show command results
+        st.rerun()
+    
+    def do_confirmation_prompt(self):
+        """Display confirmation prompts and handle user responses"""
+        if self.state.pending_confirmation:
+            prompt_data = self.state.pending_confirmation
+            
+            st.warning("⚠️ Confirmation Required")
+            
+            # Display the subject if provided
+            if prompt_data.get("subject"):
+                st.info(prompt_data["subject"])
+            
+            # Display the question
+            st.write(prompt_data["question"])
+            
+            # Create buttons for user responses
+            col1, col2, col3, col4, col5 = st.columns(5)
+            
+            with col1:
+                if st.button("✅ Yes", key="confirm_yes"):
+                    self.state.confirmation_response = "yes"
+                    self.state.pending_confirmation = None
+                    self._resume_after_confirmation()
+            
+            with col2:
+                if st.button("❌ No", key="confirm_no"):
+                    self.state.confirmation_response = "no"
+                    self.state.pending_confirmation = None
+                    self._resume_after_confirmation()
+            
+            # Add additional buttons based on available options
+            if prompt_data.get("group") and not prompt_data.get("explicit_yes_required"):
+                with col3:
+                    if st.button("✅ All", key="confirm_all"):
+                        self.state.confirmation_response = "all"
+                        self.state.pending_confirmation = None
+                        self._resume_after_confirmation()
+            
+            if prompt_data.get("group"):
+                with col4:
+                    if st.button("⏭️ Skip All", key="confirm_skip"):
+                        self.state.confirmation_response = "skip"
+                        self.state.pending_confirmation = None
+                        self._resume_after_confirmation()
+            
+            if prompt_data.get("allow_never"):
+                with col5:
+                    if st.button("🚫 Don't Ask Again", key="confirm_never"):
+                        self.state.confirmation_response = "don't"
+                        self.state.pending_confirmation = None
+                        self._resume_after_confirmation()
+            
+            # Disable other UI elements while waiting for confirmation
+            return True
+        
+        return False
+    
+    def _resume_after_confirmation(self):
+        """Resume processing after user responds to confirmation"""
+        # If there's a pending command, resume it
+        if self.state.pending_command:
+            pending_cmd = self.state.pending_command
+            self.state.pending_command = None
+            if pending_cmd["type"] == "slash_command":
+                self.handle_command(pending_cmd["prompt"])
+            elif pending_cmd["type"] == "chat":
+                # For chat processing, we'll trigger it by setting the prompt
+                self.state.prompt = pending_cmd["prompt"]
+        
         st.rerun()
 
     def info(self, message, echo=True):
