@@ -1000,8 +1000,15 @@ class Commands:
 
     def cmd_run(self, args, add_on_nonzero_exit=False):
         "Run a shell command and optionally add the output to the chat (alias: !)"
+        
+        # Detect if we're in browser mode by checking if we have a BrowserIO instance
+        is_browser_mode = hasattr(self.io, 'browser_config')
+        
+        # Don't show console output in browser mode to avoid duplication
+        show_output = not is_browser_mode
+        
         exit_status, combined_output = run_cmd(
-            args, verbose=self.verbose, error_print=self.io.tool_error, cwd=self.coder.root
+            args, verbose=self.verbose, error_print=self.io.tool_error, cwd=self.coder.root, show_output=show_output
         )
 
         if combined_output is None:
@@ -1026,6 +1033,16 @@ class Commands:
         if add_on_nonzero_exit:
             add = exit_status != 0
         else:
+            # Check if we're in browser mode and handle confirmation differently
+            if is_browser_mode:
+                # Store the context needed for completion in the browser IO
+                self.io.pending_operation = {
+                    "type": "add_to_chat",
+                    "command": args,
+                    "output": combined_output,
+                    "k_tokens": k_tokens
+                }
+            
             add = self.io.confirm_ask(f"Add {k_tokens:.1f}k tokens of command output to the chat?")
 
         if add:

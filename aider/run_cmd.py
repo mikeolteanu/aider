@@ -8,12 +8,12 @@ import pexpect
 import psutil
 
 
-def run_cmd(command, verbose=False, error_print=None, cwd=None):
+def run_cmd(command, verbose=False, error_print=None, cwd=None, show_output=True):
     try:
         if sys.stdin.isatty() and hasattr(pexpect, "spawn") and platform.system() != "Windows":
-            return run_cmd_pexpect(command, verbose, cwd)
+            return run_cmd_pexpect(command, verbose, cwd, show_output)
 
-        return run_cmd_subprocess(command, verbose, cwd)
+        return run_cmd_subprocess(command, verbose, cwd, show_output)
     except OSError as e:
         error_message = f"Error occurred while running command '{command}': {str(e)}"
         if error_print is None:
@@ -39,7 +39,7 @@ def get_windows_parent_process_name():
         return None
 
 
-def run_cmd_subprocess(command, verbose=False, cwd=None, encoding=sys.stdout.encoding):
+def run_cmd_subprocess(command, verbose=False, cwd=None, encoding=sys.stdout.encoding, show_output=True):
     if verbose:
         print("Using run_cmd_subprocess:", command)
 
@@ -77,7 +77,8 @@ def run_cmd_subprocess(command, verbose=False, cwd=None, encoding=sys.stdout.enc
             chunk = process.stdout.read(1)
             if not chunk:
                 break
-            print(chunk, end="", flush=True)  # Print the chunk in real-time
+            if show_output:
+                print(chunk, end="", flush=True)  # Print the chunk in real-time only if show_output is True
             output.append(chunk)  # Store the chunk for later use
 
         process.wait()
@@ -86,12 +87,13 @@ def run_cmd_subprocess(command, verbose=False, cwd=None, encoding=sys.stdout.enc
         return 1, str(e)
 
 
-def run_cmd_pexpect(command, verbose=False, cwd=None):
+def run_cmd_pexpect(command, verbose=False, cwd=None, show_output=True):
     """
     Run a shell command interactively using pexpect, capturing all output.
 
     :param command: The command to run as a string.
     :param verbose: If True, print output in real-time.
+    :param show_output: If True, show output in real-time (for pexpect, this controls interact mode).
     :return: A tuple containing (exit_status, output)
     """
     if verbose:
@@ -120,8 +122,13 @@ def run_cmd_pexpect(command, verbose=False, cwd=None):
                 print("Running pexpect.spawn without shell.")
             child = pexpect.spawn(command, encoding="utf-8", cwd=cwd)
 
-        # Transfer control to the user, capturing output
-        child.interact(output_filter=output_callback)
+        if show_output:
+            # Transfer control to the user, capturing output
+            child.interact(output_filter=output_callback)
+        else:
+            # Just capture output without interaction
+            child.expect(pexpect.EOF)
+            output.write(child.before.encode('utf-8', errors='replace'))
 
         # Wait for the command to finish and get the exit status
         child.close()

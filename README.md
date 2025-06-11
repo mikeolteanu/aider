@@ -95,7 +95,10 @@ git clone https://github.com/mikeolteanu/aider.git && cd aider && pip install -e
   - **URLs & Web**: URL detection, documentation links
   - **Repository**: Git repo creation, .gitignore management
   - **Analytics**: Data collection preferences
-- ✅ **Smart defaults** - Auto-approve routine tasks, always ask for security-sensitive operations
+- ✅ **Smart defaults** - Optimized for smooth development:
+  - **Auto-approve**: File creation, lint fixes, package installs, command output inclusion
+  - **Always ask**: Shell commands (security), file edits outside chat (control), analytics (privacy)
+  - **Auto-deny**: URL additions, documentation popups (reduces noise)
 - ✅ **Category organization** - Settings grouped logically with helpful descriptions
 
 ### Security & Control

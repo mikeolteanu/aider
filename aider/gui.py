@@ -50,18 +50,18 @@ class BrowserConfig:
         """Return default configuration"""
         return {
             "version": "1.0",
-            "description": "Aider browser mode configuration file",
+            "description": "Aider browser mode configuration file - Optimized defaults for smooth development workflow",
             "prompt_preferences": {
                 "file_operations": {
-                    "create_new_file": "ask",
-                    "add_file_to_chat": "ask", 
+                    "create_new_file": "always_yes",
+                    "add_file_to_chat": "always_yes", 
                     "edit_file_not_in_chat": "ask",
-                    "create_from_pattern": "ask"
+                    "create_from_pattern": "always_yes"
                 },
                 "command_execution": {
                     "run_shell_commands": "ask",
-                    "add_command_output": "ask",
-                    "add_run_output": "ask"
+                    "add_command_output": "always_yes",
+                    "add_run_output": "always_yes"
                 },
                 "installation": {
                     "pip_install": "always_yes",
@@ -75,7 +75,7 @@ class BrowserConfig:
                 },
                 "urls_and_web": {
                     "add_url_to_chat": "always_no",
-                    "open_documentation_url": "ask"
+                    "open_documentation_url": "always_no"
                 },
                 "repository": {
                     "create_git_repo": "always_yes",
@@ -113,7 +113,8 @@ class BrowserConfig:
             "ui_settings": {
                 "theme": "auto",
                 "show_session_cost": True,
-                "collapsed_announcements": True
+                "collapsed_announcements": True,
+                "auto_load_recent_history": False
             }
         }
     
@@ -151,6 +152,7 @@ class BrowserIO(InputOutput):
         super().__init__(*args, **kwargs)
         self.gui_state = None
         self.browser_config = BrowserConfig()
+        self.pending_operation = None  # Store operation to complete after confirmation
 
     def tool_output(self, *messages, log_only=False):
         if not log_only and messages:
@@ -258,6 +260,13 @@ class BrowserIO(InputOutput):
         
         if self.gui_state:
             self.gui_state.pending_confirmation = prompt_data
+            
+            # For the special case of "Add tokens to chat", store the context needed
+            # to complete the operation
+            if "tokens of command output to the chat" in question:
+                # This is likely from the /run command, store additional context
+                # We need to extract this from the call stack, but for now let's use a simpler approach
+                prompt_data["is_add_to_chat"] = True
         
         # Signal that we need user input by raising an exception
         # This will be caught by the browser interface
@@ -266,8 +275,9 @@ class BrowserIO(InputOutput):
 
 class BrowserPromptException(Exception):
     """Exception raised when browser needs to prompt user for input"""
-    def __init__(self, prompt_data):
+    def __init__(self, prompt_data, completion_callback=None):
         self.prompt_data = prompt_data
+        self.completion_callback = completion_callback
         super().__init__("Browser prompt required")
 
 
@@ -390,6 +400,7 @@ class GUI:
             
             with main_tab:
                 self.do_add_to_chat()
+                self.do_chat_history_management()
                 self.do_recent_msgs()
                 self.do_clear_chat_history()
                 
@@ -405,6 +416,8 @@ class GUI:
         """Settings UI for managing prompt preferences"""
         st.subheader("🔧 Prompt Preferences")
         st.write("Configure how aider handles different types of confirmation prompts.")
+        
+        st.info("💡 **Default settings optimized for smooth development workflow**: Auto-approve routine tasks (file creation, lint fixes, package installs), always ask for security-critical operations (shell commands), and reduce noise from URLs.")
         
         # Get the browser config
         browser_config = self.coder.commands.io.browser_config
@@ -464,31 +477,46 @@ class GUI:
                 else:
                     st.error("Failed to reset settings")
         
+        # UI Settings section
+        st.subheader("🎨 Interface Settings")
+        
+        # Auto-load recent history setting
+        current_auto_load = browser_config.config.get("ui_settings", {}).get("auto_load_recent_history", False)
+        auto_load = st.checkbox(
+            "🔄 Auto-load most recent chat history on startup",
+            value=current_auto_load,
+            help="Automatically load the most recent chat history file when starting browser mode"
+        )
+        
+        if auto_load != current_auto_load:
+            browser_config.config.setdefault("ui_settings", {})["auto_load_recent_history"] = auto_load
+            changes_made = True
+        
         # Show config file location
         st.info(f"📄 Config file: `{browser_config.config_path}`")
     
     def _get_preference_help(self, pref_key):
         """Get help text for different preference types"""
         help_text = {
-            "create_new_file": "When aider wants to create a new file that doesn't exist",
-            "add_file_to_chat": "When aider mentions a file not currently in the chat",
-            "edit_file_not_in_chat": "When aider wants to edit a file not added to chat",
-            "create_from_pattern": "When file patterns don't match existing files",
-            "run_shell_commands": "When aider suggests running shell commands (security sensitive)",
-            "add_command_output": "Whether to include command output in the chat",
-            "add_run_output": "Whether to include /run command output in chat",
-            "pip_install": "When aider wants to install Python packages",
-            "install_playwright": "When aider needs to install playwright for web scraping",
-            "openrouter_login": "When aider offers OpenRouter OAuth login",
-            "fix_lint_errors": "When aider wants to automatically fix lint errors",
-            "fix_test_errors": "When aider wants to automatically fix test failures",
-            "context_window_exceeded": "When message would exceed model's context window",
-            "add_url_to_chat": "When aider detects URLs in your input",
-            "open_documentation_url": "When aider offers to open documentation links",
-            "create_git_repo": "When aider suggests creating a git repository",
-            "add_to_gitignore": "When aider suggests adding patterns to .gitignore",
-            "analytics_opt_in": "Whether to allow anonymous analytics collection",
-            "execute_plan": "In architect mode, whether to execute the generated plan"
+            "create_new_file": "When aider wants to create a new file that doesn't exist (Default: Always Yes - streamlines development)",
+            "add_file_to_chat": "When aider mentions a file not currently in the chat (Default: Always Yes - keeps context complete)", 
+            "edit_file_not_in_chat": "When aider wants to edit a file not added to chat (Default: Ask - important decision)",
+            "create_from_pattern": "When file patterns don't match existing files (Default: Always Yes - reduces friction)",
+            "run_shell_commands": "When aider suggests running shell commands (Default: Ask - security critical)",
+            "add_command_output": "Whether to include command output in the chat (Default: Always Yes - useful context)",
+            "add_run_output": "Whether to include /run command output in chat (Default: Always Yes - useful context)",
+            "pip_install": "When aider wants to install Python packages (Default: Always Yes - routine task)",
+            "install_playwright": "When aider needs to install playwright for web scraping (Default: Always Yes - routine task)",
+            "openrouter_login": "When aider offers OpenRouter OAuth login (Default: Ask - user choice)",
+            "fix_lint_errors": "When aider wants to automatically fix lint errors (Default: Always Yes - helpful automation)",
+            "fix_test_errors": "When aider wants to automatically fix test failures (Default: Always Yes - helpful automation)",
+            "context_window_exceeded": "When message would exceed model's context window (Default: Ask - user needs to know)",
+            "add_url_to_chat": "When aider detects URLs in your input (Default: Always No - reduces noise)",
+            "open_documentation_url": "When aider offers to open documentation links (Default: Always No - reduces interruptions)",
+            "create_git_repo": "When aider suggests creating a git repository (Default: Always Yes - recommended setup)",
+            "add_to_gitignore": "When aider suggests adding patterns to .gitignore (Default: Always Yes - good practice)",
+            "analytics_opt_in": "Whether to allow anonymous analytics collection (Default: Ask - privacy choice)",
+            "execute_plan": "In architect mode, whether to execute the generated plan (Default: Ask - important decision)"
         }
         return help_text.get(pref_key, "Configure this prompt preference")
 
@@ -573,11 +601,60 @@ class GUI:
         with st.popover("Show token usage"):
             st.write("hi")
 
+    def do_chat_history_management(self):
+        """UI for loading and managing chat history"""
+        with st.expander("💬 Chat History", expanded=False):
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                if st.button("📂 Load Previous Session", help="Load chat history from a previous session"):
+                    self._show_history_loader()
+            
+            with col2:
+                if st.button("💾 Save Current Session", help="Save current chat to history file"):
+                    self._save_current_session()
+            
+            # Show current history file info
+            history_file = getattr(self.coder.io, 'chat_history_file', None)
+            if history_file:
+                import os
+                if os.path.exists(history_file):
+                    st.info(f"📄 Current history: `{os.path.basename(history_file)}`")
+                else:
+                    st.info(f"📄 History file: `{os.path.basename(history_file)}` (will be created)")
+    
+    def _show_history_loader(self):
+        """Show interface for loading chat history"""
+        self.state.init("show_history_loader", False)
+        self.state.show_history_loader = True
+        st.rerun()
+    
+    def _save_current_session(self):
+        """Save current chat session to history file"""
+        try:
+            # Force save current session
+            if hasattr(self.coder, 'cur_messages') and self.coder.cur_messages:
+                # Append current messages to done messages
+                self.coder.done_messages.extend(self.coder.cur_messages)
+                self.coder.cur_messages = []
+                
+                # Save to history file
+                self.coder.io.append_chat_history(self.coder.done_messages[-10:])  # Save last 10 messages
+                st.success("💾 Session saved to chat history!")
+            else:
+                st.warning("No chat messages to save")
+        except Exception as e:
+            st.error(f"Failed to save session: {str(e)}")
+
     def do_clear_chat_history(self):
         text = "Saves tokens, reduces confusion"
-        if self.button("Clear chat history", help=text):
+        if self.button("🗑️ Clear Current Chat", help=text):
             self.coder.done_messages = []
             self.coder.cur_messages = []
+            # Clear browser state messages too
+            self.state.messages = [
+                dict(role="info", content=self.announce()),
+            ]
             self.info("Cleared chat history. Now the LLM can't see anything before this line.")
 
     def do_show_metrics(self):
@@ -722,12 +799,18 @@ class GUI:
         self.coder.pretty = False
 
         self.initialize_state()
+        
+        # Auto-load recent history if configured
+        self._auto_load_recent_history()
 
         self.do_messages_container()
         self.do_sidebar()
         
         # Handle confirmation prompts
         self.do_confirmation_prompt()
+        
+        # Handle history loader
+        self.do_history_loader_modal()
 
         # Disable input if there's a pending confirmation
         input_disabled = self.state.pending_confirmation is not None
@@ -845,21 +928,35 @@ class GUI:
         # Don't manually display the command here - let the main flow handle it
         # This prevents double display of the user input
         
+        # Capture command output using the same CaptureIO that's already set up
+        self.coder.commands.io.get_captured_lines()  # Clear any previous output
+        
+        result = None
         try:
-            # Capture command output using the same CaptureIO that's already set up
-            self.coder.commands.io.get_captured_lines()  # Clear any previous output
-            
             # Run the command
             result = self.coder.commands.run(prompt)
             
-            # Get any output that was captured
-            captured_lines = self.coder.commands.io.get_captured_lines()
-            
-            # Display command output if any
-            if captured_lines:
-                output = "\n".join(captured_lines)
-                self.info(output)
-            
+        except BrowserPromptException as e:
+            # Command needs user confirmation - but still show output that was captured
+            pass
+        
+        # Always get and display any output that was captured, even if there was an exception
+        captured_lines = self.coder.commands.io.get_captured_lines()
+        
+        # Display command output if any
+        if captured_lines:
+            output = "\n".join(captured_lines)
+            self.info(output)
+        
+        # Check if we had a prompt exception and handle it
+        if self.state.pending_confirmation:
+            # Command needs user confirmation - the command has already executed and shown output
+            # We don't need to store anything special, the confirmation will be handled
+            # by the prompt UI and the response will be processed by confirm_ask
+            return
+        
+        # Continue with normal result handling if no exception
+        try:
             # If the command returned a result (like some commands that need to show info)
             if result and captured_lines:
                 # Don't duplicate output if we already showed captured lines
@@ -873,14 +970,6 @@ class GUI:
                 with self.messages.chat_message("assistant"):
                     res = st.write_stream(self.coder.run_stream(result))
                     self.state.messages.append({"role": "assistant", "content": res})
-                    
-        except BrowserPromptException as e:
-            # Command needs user confirmation - store the command to resume later
-            self.state.pending_command = {
-                "type": "slash_command",
-                "prompt": prompt
-            }
-            return
             
         except SwitchCoder as e:
             # Some commands like /model, /chat-mode etc. throw SwitchCoder
@@ -949,8 +1038,238 @@ class GUI:
         
         return False
     
+    def do_history_loader_modal(self):
+        """Show modal for loading chat history"""
+        if getattr(self.state, 'show_history_loader', False):
+            with st.container():
+                st.subheader("📂 Load Previous Chat Session")
+                
+                # Look for history files in current directory and common locations
+                history_files = self._find_history_files()
+                
+                if not history_files:
+                    st.warning("No chat history files found in current directory or common locations.")
+                    st.info("💡 History files are typically named `.aider.chat.history.md`")
+                    if st.button("❌ Cancel"):
+                        self.state.show_history_loader = False
+                        st.rerun()
+                    return
+                
+                # Let user select from available history files
+                selected_file = st.selectbox(
+                    "Select a chat history file to load:",
+                    options=history_files,
+                    format_func=lambda x: f"{x['display_name']} ({x['messages']} messages, {x['age']})",
+                    help="Choose a previous chat session to continue from"
+                )
+                
+                if selected_file:
+                    # Show preview of the selected file
+                    with st.expander("📋 Preview", expanded=False):
+                        preview = self._get_history_preview(selected_file['path'])
+                        st.text(preview)
+                
+                # Action buttons
+                col1, col2, col3 = st.columns(3)
+                
+                with col1:
+                    if st.button("✅ Load Session", disabled=not selected_file):
+                        self._load_chat_history(selected_file['path'])
+                        self.state.show_history_loader = False
+                        st.rerun()
+                
+                with col2:
+                    if st.button("🔄 Refresh List"):
+                        st.rerun()
+                
+                with col3:
+                    if st.button("❌ Cancel"):
+                        self.state.show_history_loader = False
+                        st.rerun()
+    
+    def _find_history_files(self):
+        """Find available chat history files"""
+        import os
+        import glob
+        from datetime import datetime
+        
+        history_files = []
+        
+        # Common locations to search
+        search_paths = [
+            ".",  # Current directory
+            os.path.expanduser("~"),  # Home directory
+        ]
+        
+        # If we're in a git repo, also search git root
+        if hasattr(self.coder, 'root') and self.coder.root:
+            search_paths.append(self.coder.root)
+        
+        for search_path in search_paths:
+            # Look for .aider.chat.history.md files
+            pattern = os.path.join(search_path, ".aider.chat.history*.md")
+            for file_path in glob.glob(pattern):
+                if os.path.isfile(file_path):
+                    try:
+                        # Get file info
+                        stat = os.stat(file_path)
+                        mtime = datetime.fromtimestamp(stat.st_mtime)
+                        age = self._format_time_ago(mtime)
+                        
+                        # Count messages in file
+                        message_count = self._count_messages_in_file(file_path)
+                        
+                        # Create display name
+                        rel_path = os.path.relpath(file_path)
+                        display_name = rel_path if len(rel_path) < len(file_path) else os.path.basename(file_path)
+                        
+                        history_files.append({
+                            'path': file_path,
+                            'display_name': display_name,
+                            'messages': message_count,
+                            'age': age,
+                            'mtime': mtime
+                        })
+                    except Exception:
+                        continue
+        
+        # Sort by modification time (newest first)
+        history_files.sort(key=lambda x: x['mtime'], reverse=True)
+        return history_files
+    
+    def _count_messages_in_file(self, file_path):
+        """Count messages in a chat history file"""
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+            # Count lines starting with #### (user messages)
+            return len([line for line in content.split('\n') if line.startswith('#### ')])
+        except Exception:
+            return 0
+    
+    def _format_time_ago(self, dt):
+        """Format time ago in human readable format"""
+        from datetime import datetime, timedelta
+        
+        now = datetime.now()
+        diff = now - dt
+        
+        if diff.days > 7:
+            return dt.strftime("%b %d, %Y")
+        elif diff.days > 0:
+            return f"{diff.days} days ago"
+        elif diff.seconds > 3600:
+            hours = diff.seconds // 3600
+            return f"{hours} hours ago"
+        elif diff.seconds > 60:
+            minutes = diff.seconds // 60
+            return f"{minutes} minutes ago"
+        else:
+            return "Just now"
+    
+    def _get_history_preview(self, file_path):
+        """Get a preview of the chat history file"""
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+            
+            # Get first few lines and last few lines
+            lines = content.split('\n')
+            if len(lines) <= 20:
+                return content
+            else:
+                preview_lines = lines[:10] + ['...', '(truncated)', '...'] + lines[-10:]
+                return '\n'.join(preview_lines)
+        except Exception as e:
+            return f"Error reading file: {str(e)}"
+    
+    def _load_chat_history(self, file_path):
+        """Load chat history from file"""
+        try:
+            from aider import utils
+            
+            # Read the history file
+            with open(file_path, 'r', encoding='utf-8') as f:
+                history_md = f.read()
+            
+            if not history_md.strip():
+                st.warning("Selected history file is empty")
+                return
+            
+            # Parse the markdown into messages
+            done_messages = utils.split_chat_history_markdown(history_md)
+            
+            if not done_messages:
+                st.warning("No valid messages found in history file")
+                return
+            
+            # Clear current chat and load history
+            self.coder.done_messages = done_messages
+            self.coder.cur_messages = []
+            
+            # Convert to browser state format and display
+            browser_messages = [dict(role="info", content=self.announce())]
+            
+            for msg in done_messages[-20:]:  # Show last 20 messages
+                if msg.get('role') in ('user', 'assistant'):
+                    browser_messages.append({
+                        'role': msg['role'],
+                        'content': msg['content']
+                    })
+            
+            self.state.messages = browser_messages
+            
+            # Update the chat history file reference
+            self.coder.io.chat_history_file = file_path
+            
+            st.success(f"✅ Loaded {len(done_messages)} messages from chat history!")
+            self.info(f"Loaded chat history from {os.path.basename(file_path)} ({len(done_messages)} messages)")
+            
+        except Exception as e:
+            st.error(f"Failed to load chat history: {str(e)}")
+    
+    def _auto_load_recent_history(self):
+        """Auto-load the most recent chat history if configured"""
+        try:
+            # Check if auto-loading is enabled in config
+            browser_config = self.coder.commands.io.browser_config
+            auto_load = browser_config.config.get("ui_settings", {}).get("auto_load_recent_history", False)
+            
+            if not auto_load:
+                return
+            
+            # Only auto-load if we don't already have messages (fresh start)
+            if len(self.state.messages) > 1:  # More than just the announcement
+                return
+            
+            # Find the most recent history file
+            history_files = self._find_history_files()
+            if not history_files:
+                return
+            
+            # Load the most recent file
+            most_recent = history_files[0]  # Already sorted by mtime
+            self._load_chat_history(most_recent['path'])
+            
+        except Exception:
+            # Silently fail auto-loading - don't interrupt startup
+            pass
+    
     def _resume_after_confirmation(self):
         """Resume processing after user responds to confirmation"""
+        # Check if there's a pending operation to complete
+        browser_io = self.coder.commands.io
+        if hasattr(browser_io, 'pending_operation') and browser_io.pending_operation:
+            operation = browser_io.pending_operation
+            browser_io.pending_operation = None
+            
+            # Get the user's response
+            response = self.state.confirmation_response
+            
+            if operation["type"] == "add_to_chat" and response == "yes":
+                # Complete the add-to-chat operation
+                self._complete_add_to_chat_operation(operation)
+        
         # If there's a pending command, resume it
         if self.state.pending_command:
             pending_cmd = self.state.pending_command
@@ -962,6 +1281,30 @@ class GUI:
                 self.state.prompt = pending_cmd["prompt"]
         
         st.rerun()
+    
+    def _complete_add_to_chat_operation(self, operation):
+        """Complete the add-to-chat operation for /run command"""
+        from aider import prompts
+        
+        command = operation["command"]
+        output = operation["output"]
+        
+        # Calculate number of lines for the confirmation message
+        num_lines = len(output.strip().splitlines())
+        line_plural = "line" if num_lines == 1 else "lines"
+        self.info(f"Added {num_lines} {line_plural} of output to the chat.")
+        
+        # Format the message for chat history
+        msg = prompts.run_output.format(
+            command=command,
+            output=output,
+        )
+        
+        # Add to chat history
+        self.coder.cur_messages += [
+            dict(role="user", content=msg),
+            dict(role="assistant", content="Ok."),
+        ]
 
     def info(self, message, echo=True):
         info = dict(role="info", content=message)
