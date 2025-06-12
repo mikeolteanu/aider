@@ -54,7 +54,7 @@ class BrowserConfig:
             "prompt_preferences": {
                 "file_operations": {
                     "create_new_file": "always_yes",
-                    "add_file_to_chat": "always_yes", 
+                    "add_file_to_chat": "ask", 
                     "edit_file_not_in_chat": "ask",
                     "create_from_pattern": "always_yes"
                 },
@@ -66,7 +66,7 @@ class BrowserConfig:
                 "installation": {
                     "pip_install": "always_yes",
                     "install_playwright": "always_yes",
-                    "openrouter_login": "ask"
+                    "openrouter_login": "always_no"
                 },
                 "error_handling": {
                     "fix_lint_errors": "always_yes",
