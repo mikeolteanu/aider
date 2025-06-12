@@ -1,0 +1,327 @@
+openapi: 3.0.3
+info:
+  title: Aider API
+  description: |
+    REST API for aider - AI pair programming in your terminal.
+    
+    This API allows you to interact with aider programmatically, sending commands
+    and receiving responses without needing to use the interactive terminal interface.
+    
+    ## Getting Started
+    
+    1. Start the aider API server:
+       ```bash
+       aider --api
+       ```
+    
+    2. The server will start on http://127.0.0.1:5000 by default
+    
+    3. Use the `/command` endpoint to send commands to aider
+    
+    ## Command Types
+    
+    The API supports two types of commands:
+    
+    ### Slash Commands
+    Built-in aider commands that start with `/`:
+    - `/add <file>` - Add files to the chat
+    - `/drop <file>` - Remove files from the chat  
+    - `/help` - Show help information
+    - `/run <command>` - Execute shell commands
+    - `/undo` - Undo the last change
+    - And many more...
+    
+    ### Chat Messages
+    Natural language messages sent directly to the AI:
+    - "Add a hello world function"
+    - "Fix the bug in the login function"
+    - "Refactor this code to use async/await"
+    
+    ## Response Handling
+    
+    Commands may return different statuses:
+    - `completed` - Command finished successfully
+    - `error` - Command failed with an error
+    - `needs_input` - Command is waiting for user confirmation
+    
+    When status is `needs_input`, the response includes a `prompt` object
+    with details about what confirmation is needed.
+  version: 1.0.0
+  contact:
+    name: Aider Support
+    url: https://github.com/Aider-AI/aider
+  license:
+    name: Apache 2.0
+    url: https://www.apache.org/licenses/LICENSE-2.0.html
+
+servers:
+  - url: http://127.0.0.1:5000
+    description: Local development server
+
+paths:
+  /health:
+    get:
+      summary: Health Check
+      description: Check if the API server is running and healthy
+      operationId: getHealth
+      tags:
+        - System
+      responses:
+        '200':
+          description: Server is healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: "healthy"
+                  version:
+                    type: string
+                    example: "1.0"
+              example:
+                status: "healthy"
+                version: "1.0"
+
+  /status:
+    get:
+      summary: Command Status
+      description: Check if a command is currently being executed and queue status
+      operationId: getStatus
+      tags:
+        - System
+      responses:
+        '200':
+          description: Current status information
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  command_in_progress:
+                    type: boolean
+                    description: Whether a command is currently being executed
+                    example: false
+                  queue_size:
+                    type: integer
+                    description: Number of commands waiting in queue
+                    example: 0
+              example:
+                command_in_progress: false
+                queue_size: 0
+
+  /command:
+    post:
+      summary: Execute Command
+      description: |
+        Execute an aider command and return the output.
+        
+        This endpoint accepts both slash commands (like `/add`, `/help`) and 
+        natural language chat messages for the AI.
+        
+        Commands are executed one at a time. If a command is already running,
+        this endpoint will return a 409 Conflict error.
+        
+        Some commands may require user input (like confirmation prompts).
+        In these cases, the response will have status `needs_input` and include
+        prompt details in the response.
+      operationId: executeCommand
+      tags:
+        - Commands
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - command
+              properties:
+                command:
+                  type: string
+                  description: The command to execute
+                  examples:
+                    - "/help"
+                    - "/add src/main.py"
+                    - "/run pytest"
+                    - "Add a function to calculate fibonacci numbers"
+                    - "Fix the bug in the authentication code"
+            examples:
+              slash_command:
+                summary: Slash command example
+                value:
+                  command: "/add src/main.py"
+              chat_message:
+                summary: Chat message example
+                value:
+                  command: "Add error handling to the login function"
+              shell_command:
+                summary: Shell command example
+                value:
+                  command: "/run python -m pytest tests/"
+      responses:
+        '200':
+          description: Command executed successfully or needs input
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: '#/components/schemas/CommandSuccessResponse'
+                  - $ref: '#/components/schemas/CommandInputNeededResponse'
+              examples:
+                success:
+                  summary: Successful command execution
+                  value:
+                    output: "Added src/main.py to the chat.\n\nThe following files are now in the chat:\n- src/main.py"
+                    status: "completed"
+                needs_input:
+                  summary: Command needs user confirmation
+                  value:
+                    output: "Found 1 Python file to format with black."
+                    status: "needs_input"
+                    prompt:
+                      question: "Run black to format the code? (Y)es/(N)o [Yes]: "
+                      subject: "Format code with black"
+                      default: "y"
+                      type: "confirmation"
+                      explicit_yes_required: false
+                      allow_never: false
+        '400':
+          description: Bad request - invalid JSON or missing command field
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: "Invalid request"
+                message: "Request must contain 'command' field"
+        '409':
+          description: Conflict - another command is already running
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: "Command in progress"
+                message: "Please wait for current command to complete"
+        '500':
+          description: Internal server error during command execution
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ErrorResponse'
+                  - type: object
+                    properties:
+                      traceback:
+                        type: string
+                        description: Python traceback for debugging
+              example:
+                error: "Internal server error"
+                message: "Failed to execute command"
+                status: "error"
+
+components:
+  schemas:
+    CommandSuccessResponse:
+      type: object
+      required:
+        - output
+        - status
+      properties:
+        output:
+          type: string
+          description: The complete output from the command execution
+          example: "Added src/main.py to the chat.\n\nThe file has been successfully added and is now available for editing."
+        status:
+          type: string
+          enum: [completed]
+          description: Indicates the command completed successfully
+          example: "completed"
+    
+    CommandInputNeededResponse:
+      type: object
+      required:
+        - output
+        - status
+        - prompt
+      properties:
+        output:
+          type: string
+          description: Output generated so far before the prompt
+          example: "Found 3 lint errors in the code."
+        status:
+          type: string
+          enum: [needs_input]
+          description: Indicates the command is waiting for user input
+          example: "needs_input"
+        prompt:
+          $ref: '#/components/schemas/PromptDetails'
+    
+    PromptDetails:
+      type: object
+      required:
+        - question
+        - type
+      properties:
+        question:
+          type: string
+          description: The question being asked to the user
+          example: "Create new file src/helper.py? (Y)es/(N)o [Yes]: "
+        subject:
+          type: string
+          description: Brief description of what's being asked
+          example: "Create new file"
+          nullable: true
+        default:
+          type: string
+          description: Default answer if user just presses enter
+          example: "y"
+        type:
+          type: string
+          enum: [confirmation]
+          description: Type of prompt (currently only confirmation supported)
+          example: "confirmation"
+        explicit_yes_required:
+          type: boolean
+          description: Whether an explicit 'yes' response is required
+          example: false
+        allow_never:
+          type: boolean
+          description: Whether 'never ask again' option is available
+          example: false
+        group:
+          type: object
+          description: Information about grouped prompts
+          nullable: true
+    
+    ErrorResponse:
+      type: object
+      required:
+        - error
+        - message
+      properties:
+        error:
+          type: string
+          description: Error type or category
+          example: "Invalid request"
+        message:
+          type: string
+          description: Human-readable error message
+          example: "Request must contain 'command' field"
+        status:
+          type: string
+          enum: [error]
+          description: Always 'error' for error responses
+          example: "error"
+
+tags:
+  - name: System
+    description: System health and status endpoints
+  - name: Commands
+    description: Command execution endpoints
+
+externalDocs:
+  description: Aider Documentation
+  url: https://aider.chat/docs/

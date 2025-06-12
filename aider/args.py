@@ -173,6 +173,13 @@ def get_parser(default_config_files, git_root):
         help="Use architect edit format for the main chat",
     )
     group.add_argument(
+        "--markdown-editor",
+        action="store_const",
+        dest="edit_format",
+        const="markdown-editor",
+        help="Use markdown editor format optimized for editing markdown files",
+    )
+    group.add_argument(
         "--auto-accept-architect",
         action=argparse.BooleanOptionalAction,
         default=True,
@@ -645,6 +652,12 @@ def get_parser(default_config_files, git_root):
         "--browser",
         action=argparse.BooleanOptionalAction,
         help="Run aider in your browser (default: False)",
+        default=False,
+    )
+    group.add_argument(
+        "--api",
+        action=argparse.BooleanOptionalAction,
+        help="Run aider as a Flask API server (default: False)",
         default=False,
     )
     group.add_argument(

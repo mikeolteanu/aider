@@ -214,6 +214,15 @@ def check_streamlit_install(io):
     )
 
 
+def check_flask_install(io):
+    return utils.check_pip_install_extra(
+        io,
+        "flask",
+        "You need to install Flask for API mode",
+        ["flask"],
+    )
+
+
 def write_streamlit_credentials():
     from streamlit.file_util import get_streamlit_file_path
 
@@ -666,6 +675,16 @@ def main(argv=None, input=None, output=None, force_git_root=None, return_coder=F
         launch_gui(argv)
         analytics.event("exit", reason="GUI session ended")
         return
+
+    if args.api and not return_coder:
+        if not check_flask_install(io):
+            analytics.event("exit", reason="Flask not installed")
+            return
+        analytics.event("api session")
+        from aider.api import launch_api
+        result = launch_api(argv)
+        analytics.event("exit", reason="API session ended")
+        return result
 
     if args.verbose:
         for fname in loaded_dotenvs:

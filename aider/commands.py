@@ -1671,6 +1671,90 @@ Just show me the edits I need to make.
         except Exception as e:
             self.io.tool_error(f"An unexpected error occurred while copying to clipboard: {str(e)}")
 
+    def cmd_editable(self, args):
+        "Mark files as editable (can be modified) in markdown editor mode"
+        if not args.strip():
+            # Show current editable files
+            if hasattr(self.coder, 'editable_files') and self.coder.editable_files:
+                self.io.tool_output("Editable files:")
+                for fname in sorted(self.coder.editable_files):
+                    rel_fname = self.coder.get_rel_fname(fname)
+                    self.io.tool_output(f"  {rel_fname}")
+            else:
+                self.io.tool_output("No files marked as editable.")
+            return
+
+        if not hasattr(self.coder, 'editable_files'):
+            self.io.tool_error("This command is only available in markdown editor mode.")
+            return
+
+        # Add files as editable
+        filenames = parse_quoted_filenames(args)
+        for fname in filenames:
+            abs_fname = self.coder.abs_root_path(fname)
+            
+            # Remove from context files if it was there
+            if hasattr(self.coder, 'context_files'):
+                self.coder.context_files.discard(abs_fname)
+            
+            # Add to editable files
+            self.coder.editable_files.add(abs_fname)
+            
+            # Make sure it's in the chat files
+            if abs_fname not in self.coder.abs_fnames:
+                self.coder.abs_fnames.add(abs_fname)
+            
+            # Remove from read-only if it was there
+            if abs_fname in self.coder.abs_read_only_fnames:
+                self.coder.abs_read_only_fnames.discard(abs_fname)
+            
+            self.io.tool_output(f"Marked {fname} as editable.")
+
+    def completions_editable(self):
+        return self.completions_add()
+
+    def cmd_context_only(self, args):
+        "Mark files as context-only (read-only reference) in markdown editor mode"
+        if not args.strip():
+            # Show current context files
+            if hasattr(self.coder, 'context_files') and self.coder.context_files:
+                self.io.tool_output("Context files:")
+                for fname in sorted(self.coder.context_files):
+                    rel_fname = self.coder.get_rel_fname(fname)
+                    self.io.tool_output(f"  {rel_fname}")
+            else:
+                self.io.tool_output("No files marked as context-only.")
+            return
+
+        if not hasattr(self.coder, 'context_files'):
+            self.io.tool_error("This command is only available in markdown editor mode.")
+            return
+
+        # Add files as context-only
+        filenames = parse_quoted_filenames(args)
+        for fname in filenames:
+            abs_fname = self.coder.abs_root_path(fname)
+            
+            # Remove from editable files if it was there
+            if hasattr(self.coder, 'editable_files'):
+                self.coder.editable_files.discard(abs_fname)
+            
+            # Add to context files
+            self.coder.context_files.add(abs_fname)
+            
+            # Add to read-only files
+            if abs_fname not in self.coder.abs_read_only_fnames:
+                self.coder.abs_read_only_fnames.add(abs_fname)
+            
+            # Remove from main files if it was there
+            if abs_fname in self.coder.abs_fnames:
+                self.coder.abs_fnames.discard(abs_fname)
+            
+            self.io.tool_output(f"Marked {fname} as context-only.")
+
+    def completions_context_only(self):
+        return self.completions_add()
+
 
 def expand_subdir(file_path):
     if file_path.is_file():

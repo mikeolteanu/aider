@@ -64,6 +64,20 @@ git clone https://github.com/mikeolteanu/aider.git && cd aider && pip install -e
 
 ## 🚀 Custom Features in This Version
 
+### Flask API Mode
+- ✅ **REST API server** - Control aider programmatically via HTTP endpoints
+- ✅ **Command execution** - Send both slash commands and chat messages via `/command` endpoint
+- ✅ **Interactive prompt handling** - API returns prompt details when user input is needed
+- ✅ **Single-threaded execution** - Proper command queuing and status management
+- ✅ **Complete output capture** - All console output returned in API responses
+
+### Markdown Editor Mode
+- ✅ **Specialized markdown editing** - Optimized for technical writing and documentation
+- ✅ **Adaptive edit modes** - Automatically chooses between diff and whole-file editing
+- ✅ **Flexible file management** - All files editable by default, mark as context-only when needed  
+- ✅ **Markdown-optimized prompts** - Best practices for formatting, structure, and syntax
+- ✅ **Mixed content workflows** - Edit any files while using others as reference context
+
 ### Enhanced Browser Mode
 - ✅ **Full slash command support** - All commands work in browser: `/add`, `/drop`, `/help`, `/tokens`, `/run`, `/git`, `/lint`, etc.
 - ✅ **Interactive confirmation prompts** - Users can respond to all aider questions directly in the browser interface
@@ -113,6 +127,40 @@ git clone https://github.com/mikeolteanu/aider.git && cd aider && pip install -e
 
 ### Usage Examples
 
+**API mode:**
+```bash
+# Start API server
+aider --api
+
+# Send commands via HTTP (from another terminal or script)
+curl -X POST http://127.0.0.1:5000/command \
+  -H 'Content-Type: application/json' \
+  -d '{"command":"/add src/main.py"}'
+
+curl -X POST http://127.0.0.1:5000/command \
+  -H 'Content-Type: application/json' \
+  -d '{"command":"add error handling to the login function"}'
+
+# Check server status
+curl http://127.0.0.1:5000/status
+```
+
+**Markdown editor mode:**
+```bash
+# Start markdown editor mode
+aider --markdown-editor
+
+# Add all files (all editable by default)
+/add README.md docs/guide.md CONTRIBUTING.md src/main.py tests/test_main.py
+
+# Mark code files as context-only for reference  
+/context-only src/main.py tests/test_main.py
+
+# Now edit files with intelligent mode selection:
+# "Replace all instances of 'setup.py' with 'pyproject.toml'" → Uses diff mode
+# "Reformat this entire document with better structure" → Uses whole file mode
+```
+
 **Browser mode with custom config:**
 ```bash
 # Start browser mode
@@ -122,9 +170,30 @@ aider --browser
 # Configure preferences in Settings tab of browser interface
 ```
 
+**Combined modes:**
+```bash
+# Use markdown editor mode with API access
+aider --api --markdown-editor
+
+# Use markdown editor mode in browser
+aider --browser --markdown-editor
+
+# API mode with specific model
+aider --api --model claude-3-5-sonnet-20241022
+
+# All modes support the full range of aider features
+aider --api --markdown-editor --auto-commits --model sonnet
+```
+
 **Example configuration scenarios:**
 - **Development workflow**: Auto-approve lint fixes, test fixes, and package installs
 - **Security-focused**: Ask for all commands, auto-deny URL additions  
 - **Streamlined**: Auto-approve file creation and repo setup, ask for everything else
 
 This enhanced version transforms aider's browser mode from a limited interface into a full-featured development environment with smart automation and complete user control.
+
+## 📚 Additional Documentation
+
+- **[Markdown Editor Mode Guide](markdown_editor_mode.md)** - Complete guide to the new markdown editing features
+- **[API Mode Documentation](api_implementation_docs.md)** - Technical details on the Flask API implementation  
+- **[OpenAPI Specification](openapi.yaml)** - REST API documentation for programmatic access
